@@ -324,7 +324,7 @@ async function stopServices(): Promise<void> {
 }
 
 /** The editor owns its save dialog. Leave it running until the person closes it. */
-async function prepareEditorShutdown() {
+async function editorShutdownRefusal(): Promise<string | undefined> {
   let editor: string | undefined;
   try {
     editor = await daemon?.prepareEditorShutdown();
@@ -337,12 +337,12 @@ async function prepareEditorShutdown() {
       defaultId: 0, cancelId: 0,
     });
     if (answer.response !== 0) return;
-    throw cause;
+    return cause instanceof Error ? cause.message : String(cause);
   }
   if (editor) {
     const message = menuLabels.closeNativeEditor ?? "Save your changes in the editor and close it, then try again.";
     await dialog.showMessageBox({ type: "info", message, detail: editor });
-    throw new Error(message);
+    return message;
   }
 }
 
@@ -357,7 +357,8 @@ function prepareShutdown(forUpdate = false): Promise<void> {
       }
     }
     try {
-      await prepareEditorShutdown();
+      const refusal = await editorShutdownRefusal();
+      if (refusal !== undefined) throw new Error(refusal);
     } catch (cause) {
       // Saving succeeded, but the quit was declined. Restore editing in the window.
       if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("ohmygame:cancel-close", undefined);
@@ -746,7 +747,7 @@ handle("ohmygame:runtime-state", (event) => {
 });
 handle("ohmygame:restart-runtime", async (event, options: unknown) => {
   if (!mainWindow || event.sender !== mainWindow.webContents || !daemon || quitting) throw new Error("Invalid background service source");
-  await prepareEditorShutdown();
+  if ((await editorShutdownRefusal()) !== undefined) return daemon.state();
   return daemon.restart({ safeMode: (options as { safeMode?: unknown } | undefined)?.safeMode === true });
 });
 
